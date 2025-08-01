@@ -1,0 +1,40 @@
+name: Run
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - name: Run apt update
+      run: sudo apt update
+    - name: Install LibELF
+      run: sudo apt install -y libelf-dev
+    - name: Install LibConfig
+      run: sudo apt install -y libconfig-dev 
+    - name: Install LLVM
+      run: sudo apt install -y llvm
+    - name: Install LibXDP Depedencies
+      run: sudo apt install -y libpcap-dev m4 gcc-multilib linux-tools-$(uname -r)
+    - name: Build LibXDP.
+      run: make libxdp
+    - name: Install LibXDP.
+      run: sudo make libxdp_install
+    - name: Make project
+      run: make
+    - name: Install project
+      run: sudo make install
+    - name: Create basic config file.
+      run: echo 'verbose = 5; filters = ( { enabled = true; log = true; action = 0; tcp_enabled = true; tcp_dport = 22; } );' > ./basic.conf
+    - name: Retrieve default network interface.
+      run: echo "INTERFACE=$(ip route | awk '/default/ {print $5}')" >> $GITHUB_ENV
+    - name: Run XDP Firewall for 10 seconds using basic config and default network interface.
+      run: sudo xdpfw -c ./basic.conf -t 10 -i ${{ env.INTERFACE }}
