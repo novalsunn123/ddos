@@ -1,10 +1,11 @@
-module sqlite-admin
+module center
 
-go 1.23.0
+go 1.24.5
 
-toolchain go1.24.5
-
-require modernc.org/sqlite v1.38.2
+require (
+	github.com/google/go-querystring v1.1.0
+	modernc.org/sqlite v1.38.2
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
