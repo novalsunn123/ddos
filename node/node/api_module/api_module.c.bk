@@ -1,0 +1,137 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <curl/curl.h>
+
+#define MAX_URL_LEN 256
+#define BUFFER_SIZE 4096
+
+typedef struct {
+    char url[MAX_URL_LEN];
+    time_t checktime;
+    int delay;
+} ConfigData;
+
+// Đọc file config
+static int read_config(const char *config_path, ConfigData *cfg) {
+    FILE *f = fopen(config_path, "r");
+    if (!f) {
+        perror("Không mở được file config");
+        return -1;
+    }
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "url=", 4) == 0) {
+            strncpy(cfg->url, line + 4, sizeof(cfg->url));
+            cfg->url[strcspn(cfg->url, "\r\n")] = 0;
+        } else if (strncmp(line, "checktime=", 10) == 0) {
+            cfg->checktime = atol(line + 10);
+        } else if (strncmp(line, "delay=", 6) == 0) {
+            cfg->delay = atoi(line + 6);
+        }
+    }
+    fclose(f);
+    return 0;
+}
+
+// Ghi file config (cập nhật checktime)
+static int write_config(const char *config_path, const ConfigData *cfg) {
+    FILE *f = fopen(config_path, "w");
+    if (!f) {
+        perror("Không mở được file config để ghi");
+        return -1;
+    }
+    fprintf(f, "url=%s\n", cfg->url);
+    fprintf(f, "checktime=%ld\n", cfg->checktime);
+    fprintf(f, "delay=%d\n", cfg->delay);
+    fclose(f);
+    return 0;
+}
+
+// Callback nhận dữ liệu từ CURL
+struct MemoryStruct {
+    char *memory;
+    size_t size;
+};
+
+static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t realsize = size * nmemb;
+    struct MemoryStruct *mem = (struct MemoryStruct *)userp;
+
+    char *ptr = realloc(mem->memory, mem->size + realsize + 1);
+    if (!ptr) {
+        fprintf(stderr, "Không đủ bộ nhớ\n");
+        return 0;
+    }
+    mem->memory = ptr;
+    memcpy(&(mem->memory[mem->size]), contents, realsize);
+    mem->size += realsize;
+    mem->memory[mem->size] = 0;
+    return realsize;
+}
+
+// Gọi API
+static int call_api(const char *url, time_t checktime, char **response) {
+    CURL *curl;
+    CURLcode res;
+    struct MemoryStruct chunk;
+    chunk.memory = malloc(1);
+    chunk.size = 0;
+
+    curl = curl_easy_init();
+    if (!curl) {
+        fprintf(stderr, "Không khởi tạo được CURL\n");
+        free(chunk.memory);
+        return -1;
+    }
+
+    char full_url[MAX_URL_LEN];
+    snprintf(full_url, sizeof(full_url), "%s/query?checktime=%ld", url, checktime);
+
+    curl_easy_setopt(curl, CURLOPT_URL, full_url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+
+    res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        fprintf(stderr, "CURL lỗi: %s\n", curl_easy_strerror(res));
+        free(chunk.memory);
+        curl_easy_cleanup(curl);
+        return -1;
+    }
+
+    *response = chunk.memory;
+    curl_easy_cleanup(curl);
+    return 0;
+}
+
+int call_api_and_update_config(const char *config_path) {
+    ConfigData cfg;
+    if (read_config(config_path, &cfg) != 0) {
+        return -1;
+    }
+
+    printf("URL: %s\n", cfg.url);
+    printf("Checktime hiện tại: %ld\n", cfg.checktime);
+    printf("Delay: %d giây\n", cfg.delay);
+
+    char *response = NULL;
+    if (call_api(cfg.url, cfg.checktime, &response) != 0) {
+        return -1;
+    }
+
+    printf("Response:\n%s\n", response);
+
+    // Cập nhật checktime mới
+    cfg.checktime = time(NULL);
+    if (write_config(config_path, &cfg) != 0) {
+        free(response);
+        return -1;
+    }
+
+    printf("Cập nhật checktime thành: %ld\n", cfg.checktime);
+
+    free(response);
+    return 0;
+}
